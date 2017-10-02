@@ -10,6 +10,7 @@ import tempfile
 import os
 import json
 import stat
+import re
 from git import Repo
 
 def main():
@@ -77,6 +78,8 @@ def find_strings(git_url, printJson=False):
     repo = Repo(project_path)
     already_searched = set()
 
+    if printJson: print('[')
+
     for remote_branch in repo.remotes.origin.fetch():
         branch_name = str(remote_branch).split('/')[1]
         try:
@@ -85,7 +88,7 @@ def find_strings(git_url, printJson=False):
             pass
 
         prev_commit = None
-        for curr_commit in repo.iter_commits():
+        for curr_commit in repo.iter_commits(): # TODO: exclude merge commits
             if not prev_commit:
                 pass
             else:
@@ -96,48 +99,67 @@ def find_strings(git_url, printJson=False):
                     continue
                 already_searched.add(hashes)
 
-                diff = prev_commit.diff(curr_commit, create_patch=True)
-                for blob in diff:
+                # diff = repo.git.diff(prev_commit, curr_commit, p=True)
+                diffs = prev_commit.diff(curr_commit, create_patch=True, unified=0)
+                for diff in diffs:
                     #print i.a_blob.data_stream.read()
-                    printableDiff = blob.diff.decode('utf-8', errors='replace')
-                    if printableDiff.startswith("Binary files"):
+                    diffstr = diff.diff.decode('utf-8', errors='replace')
+                    if diffstr.startswith("Binary files"):
                         continue
-                    stringsFound = []
-                    lines = blob.diff.decode('utf-8', errors='replace').split("\n")
-                    for line in lines:
+                    findings = {}
+                    lines = diffstr.split("\n")
+                    baseline = 0;
+                    for i,line in enumerate(lines):
+                        if re.match(r"@@ -\d*,\d* \+\d*,\d* @@", line):
+                            baseline = int(re.findall(r'\d*,\d*', line)[0].split(',')[0])
+                            continue
+                        elif line.startswith('-'): # only report when secrets are added, not removed
+                            continue
                         for word in line.split():
                             base64_strings = get_strings_of_set(word, BASE64_CHARS)
                             hex_strings = get_strings_of_set(word, HEX_CHARS)
                             for string in base64_strings:
                                 b64Entropy = shannon_entropy(string, BASE64_CHARS)
                                 if b64Entropy > 4.5:
-                                    stringsFound.append(string)
-                                    printableDiff = printableDiff.replace(string, bcolors.WARNING + string + bcolors.ENDC)
+                                    findings[string] = findings.get(string,[]) + [i]
+                                    diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                             for string in hex_strings:
                                 hexEntropy = shannon_entropy(string, HEX_CHARS)
                                 if hexEntropy > 3:
-                                    stringsFound.append(string)
-                                    printableDiff = printableDiff.replace(string, bcolors.WARNING + string + bcolors.ENDC)
-                    if len(stringsFound) > 0:
-                        commit_time =  datetime.datetime.fromtimestamp(prev_commit.committed_date).strftime('%Y-%m-%d %H:%M:%S')
+                                    findings[string] = findings.get(string,[]) + [i]
+                                    diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
+                    if len(findings) > 0:
+                        commit_time =  datetime.datetime.fromtimestamp(curr_commit.committed_date);
                         entropicDiff = {}
-                        entropicDiff['date'] = commit_time
+                        entropicDiff['date'] = commit_time.isoformat()
+                        entropicDiff['author'] = {'name': curr_commit.author.name, 'email': curr_commit.author.email}
                         entropicDiff['branch'] = branch_name
-                        entropicDiff['commit'] = prev_commit.message
-                        entropicDiff['diff'] = blob.diff.decode('utf-8', errors='replace') 
-                        entropicDiff['stringsFound'] = stringsFound
+                        entropicDiff['commit'] = curr_commit.message.strip()
+                        entropicDiff['hash'] = curr_commit.hexsha
+                        entropicDiff['file'] = diff.b_path # TODO: make sure this is the correct filename for associated commit hash
+                        entropicDiff['diff'] = diff.diff.decode('utf-8', errors='replace')
+                        entropicDiff['stringsFound'] = findings.keys() # TODO: remove this at major version update, deprecated by new 'findings' structure
+                        entropicDiff['findings'] = findings # a dictionary mapping found strings to a list of line numbers where they were found
                         output["entropicDiffs"].append(entropicDiff)
                         if printJson:
-                            print(json.dumps(output, sort_keys=True, indent=4))
+                            if len(output['entropicDiffs']) > 1: print(',')
+                            sys.stdout.write(json.dumps(entropicDiff, sort_keys=True, indent=4))
+                            sys.stdout.flush()
                         else:
-                            print(bcolors.OKGREEN + "Date: " + commit_time + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Date: " + commit_time.strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Author: " + curr_commit.author.email + bcolors.ENDC)
                             print(bcolors.OKGREEN + "Branch: " + branch_name + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Commit: " + prev_commit.message + bcolors.ENDC)
-                            print(printableDiff)
+                            print(bcolors.OKGREEN + "Commit: " + curr_commit.message.strip() + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Hash: " + curr_commit.hexsha + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "File: " + diff.b_path + bcolors.ENDC)
+                            print('\n' + diffstr)
 
             prev_commit = curr_commit
+
+    if printJson: print('\n]')
     output["project_path"] = project_path
     return output
 
 if __name__ == "__main__":
     main()
+
