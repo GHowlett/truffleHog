@@ -18,9 +18,12 @@ def main():
     parser.add_argument('--json', dest="output_json", action="store_true", help="Output in JSON")
     parser.add_argument('git_url', type=str, help='URL for secret searching')
     args = parser.parse_args()
-    output = find_strings(args.git_url, args.output_json)
-    project_path = output["project_path"]
-    shutil.rmtree(project_path, onerror=del_rw)
+    try:
+        project_path = tempfile.mkdtemp()
+        Repo.clone_from(args.git_url, project_path)
+        output = find_strings(project_path, args.output_json)
+    finally:
+        shutil.rmtree(project_path, onerror=del_rw)
 
 
 BASE64_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/="
@@ -71,11 +74,9 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-def find_strings(git_url, printJson=False):
-    project_path = tempfile.mkdtemp()
-    Repo.clone_from(git_url, project_path)
-    output = {"entropicDiffs": []}
-    repo = Repo(project_path)
+def find_strings(dir, printJson=False):
+    entropicDiffs = []
+    repo = Repo(dir)
     already_searched = set()
 
     if printJson: print('[')
@@ -140,9 +141,9 @@ def find_strings(git_url, printJson=False):
                         entropicDiff['diff'] = diff.diff.decode('utf-8', errors='replace')
                         entropicDiff['stringsFound'] = findings.keys() # TODO: remove this at major version update, deprecated by new 'findings' structure
                         entropicDiff['findings'] = findings # a dictionary mapping found strings to a list of line numbers where they were found
-                        output["entropicDiffs"].append(entropicDiff)
+                        entropicDiffs.append(entropicDiff)
                         if printJson:
-                            if len(output['entropicDiffs']) > 1: print(',')
+                            if len(entropicDiffs) > 1: print(',')
                             sys.stdout.write(json.dumps(entropicDiff, sort_keys=True, indent=4))
                             sys.stdout.flush()
                         else:
@@ -157,8 +158,7 @@ def find_strings(git_url, printJson=False):
             prev_commit = curr_commit
 
     if printJson: print('\n]')
-    output["project_path"] = project_path
-    return output
+    return entropicDiffs
 
 if __name__ == "__main__":
     main()
