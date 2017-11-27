@@ -12,6 +12,7 @@ import json
 import stat
 import re
 from git import Repo
+from gibberishDetector import is_gibberish
 
 def main():
     parser = argparse.ArgumentParser(description='Find secrets hidden in the depths of git.')
@@ -117,12 +118,14 @@ def find_strings(dir, printJson=False):
                             hex_strings = get_strings_of_set(word, HEX_CHARS)
                             for string in base64_strings:
                                 b64Entropy = shannon_entropy(string, BASE64_CHARS)
-                                if b64Entropy > 4.5:
+				# is_gibberish check reduces false positives with markov chain. 
+				# false negative unlikely if str is truly high-entropy.
+                                if b64Entropy > 4.5 and is_gibberish(string): 
                                     findings[string] = findings.get(string,[]) + [i]
                                     diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                             for string in hex_strings:
                                 hexEntropy = shannon_entropy(string, HEX_CHARS)
-                                if hexEntropy > 3:
+                                if hexEntropy > 3 and is_gibberish(string):
                                     findings[string] = findings.get(string,[]) + [i]
                                     diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                     if len(findings) > 0:

@@ -1,0 +1,3 @@
+[submodule "truffleHog/gibberishDetector"]
+	path = truffleHog/gibberishDetector
+	url = https://github.com/GHowlett/Gibberish-Detector.git
