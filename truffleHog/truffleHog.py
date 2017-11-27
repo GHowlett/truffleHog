@@ -20,7 +20,7 @@ def main():
     args = parser.parse_args()
     try:
         project_path = tempfile.mkdtemp()
-        Repo.clone_from(args.git_url, project_path)
+        Repo.clone_from(args.git_url, project_path, mirror=True)
         output = find_strings(project_path, args.output_json)
     finally:
         shutil.rmtree(project_path, onerror=del_rw)
@@ -81,15 +81,11 @@ def find_strings(dir, printJson=False):
 
     if printJson: print('[')
 
-    for remote_branch in repo.remotes.origin.fetch():
-        branch_name = str(remote_branch).split('/')[1]
-        try:
-            repo.git.checkout(remote_branch, b=branch_name)
-        except:
-            pass
+    for branch in repo.branches:
+        branch_name = branch.name
 
         prev_commit = None
-        for curr_commit in repo.iter_commits(): # TODO: exclude merge commits
+        for curr_commit in repo.iter_commits(branch.commit): # TODO: exclude merge commits
             if not prev_commit:
                 pass
             else:
