@@ -21,6 +21,7 @@ def main():
     args = parser.parse_args()
     try:
         project_path = tempfile.mkdtemp()
+	# do a mirror clone to save space, preserve branch refs, and enable local bare repo targets
         Repo.clone_from(args.git_url, project_path, mirror=True)
         output = find_strings(project_path, args.output_json)
     finally:
@@ -81,16 +82,19 @@ def find_strings(dir, printJson=False):
     already_searched = set()
 
     if printJson: print('[')
-
+	
+    # iterate branches in the local repo
+    # TODO: fetch remote branches if possible
     for branch in repo.branches:
         branch_name = branch.name
 
-        prev_commit = None
+        prev_commit = None # last commit traversed (but newest chronologically)
+	# traverses commits from branch's HEAD backwards
         for curr_commit in repo.iter_commits(branch.commit): # TODO: exclude merge commits
             if not prev_commit:
                 pass
             else:
-                #avoid searching the same diffs
+                # avoid searching the same diffs
                 hashes = str(prev_commit) + str(curr_commit)
                 if hashes in already_searched:
                     prev_commit = curr_commit
@@ -98,13 +102,13 @@ def find_strings(dir, printJson=False):
                 already_searched.add(hashes)
 
                 # diff = repo.git.diff(prev_commit, curr_commit, p=True)
-                diffs = prev_commit.diff(curr_commit, create_patch=True, unified=0)
+                # gives all changes inside prev_commit
+		diffs = curr_commit.diff(prev_commit, create_patch=True, unified=0)
                 for diff in diffs:
-                    #print i.a_blob.data_stream.read()
                     diffstr = diff.diff.decode('utf-8', errors='replace')
                     if diffstr.startswith("Binary files"):
                         continue
-                    findings = {}
+                    findings = {} # TODO: stream findings rather than store to avoid high memory usage
                     lines = diffstr.split("\n")
                     baseline = 0;
                     for i,line in enumerate(lines):
@@ -129,17 +133,17 @@ def find_strings(dir, printJson=False):
                                     findings[string] = findings.get(string,[]) + [i]
                                     diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                     if len(findings) > 0:
-                        commit_time =  datetime.datetime.fromtimestamp(curr_commit.committed_date);
+                        commit_time =  datetime.datetime.fromtimestamp(prev_commit.committed_date);
                         entropicDiff = {}
                         entropicDiff['date'] = commit_time.isoformat()
-                        entropicDiff['author'] = {'name': curr_commit.author.name, 'email': curr_commit.author.email}
+                        entropicDiff['author'] = {'name': prev_commit.author.name, 'email': prev_commit.author.email}
                         entropicDiff['branch'] = branch_name
-                        entropicDiff['commit'] = curr_commit.message.strip()
-                        entropicDiff['hash'] = curr_commit.hexsha
-                        entropicDiff['file'] = diff.b_path # TODO: make sure this is the correct filename for associated commit hash
+                        entropicDiff['commit'] = prev_commit.message.strip()
+                        entropicDiff['hash'] = prev_commit.hexsha
+                        entropicDiff['file'] = diff.b_path # the name of the file after prev_commit applied
                         entropicDiff['diff'] = diff.diff.decode('utf-8', errors='replace')
-                        entropicDiff['stringsFound'] = findings.keys() # TODO: remove this at major version update, deprecated by new 'findings' structure
-                        entropicDiff['findings'] = findings # a dictionary mapping found strings to a list of line numbers where they were found
+                        entropicDiff['stringsFound'] = findings.keys() # TODO: remove this, deprecated by new 'findings' structure
+                        entropicDiff['findings'] = findings # dictionary mapping found strings to a list of line numbers where they were found
                         entropicDiffs.append(entropicDiff)
                         if printJson:
                             if len(entropicDiffs) > 1: print(',')
@@ -147,10 +151,10 @@ def find_strings(dir, printJson=False):
                             sys.stdout.flush()
                         else:
                             print(bcolors.OKGREEN + "Date: " + commit_time.strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Author: " + curr_commit.author.email + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Author: " + prev_commit.author.email + bcolors.ENDC)
                             print(bcolors.OKGREEN + "Branch: " + branch_name + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Commit: " + curr_commit.message.strip() + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Hash: " + curr_commit.hexsha + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Commit: " + prev_commit.message.strip() + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Hash: " + prev_commit.hexsha + bcolors.ENDC)
                             print(bcolors.OKGREEN + "File: " + diff.b_path + bcolors.ENDC)
                             print('\n' + diffstr)
 
