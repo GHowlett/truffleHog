@@ -89,8 +89,8 @@ def find_strings(dir, printJson=False):
         branch_name = branch.name
 
         prev_commit = None # last commit traversed (but newest chronologically)
-	# traverses commits from branch's HEAD backwards
-        for curr_commit in repo.iter_commits(branch.commit): # TODO: exclude merge commits
+	# traverse commits from branch's HEAD backwards
+        for curr_commit in repo.iter_commits(**{"rev":branch.commit, "no-merges":True}):
             if not prev_commit:
                 pass
             else:
@@ -102,7 +102,7 @@ def find_strings(dir, printJson=False):
                 already_searched.add(hashes)
 
                 # diff = repo.git.diff(prev_commit, curr_commit, p=True)
-                # gives all changes inside prev_commit
+                # give all changes inside prev_commit
 		diffs = curr_commit.diff(prev_commit, create_patch=True, unified=0)
                 for diff in diffs:
                     diffstr = diff.diff.decode('utf-8', errors='replace')
