@@ -85,25 +85,21 @@ def find_strings(dir, printJson=False):
 	
     # iterate branches in the local repo
     # TODO: fetch remote branches if possible
+    # TODO: sort branches chronologically (by head commit date) first
     for branch in repo.branches:
         branch_name = branch.name
 
-        prev_commit = None # last commit traversed (but newest chronologically)
-	# traverse commits from branch's HEAD backwards
+	# traverse commits from branch's HEAD backwards (chronologically)
         for curr_commit in repo.iter_commits(**{"rev":branch.commit, "no-merges":True}):
-            if not prev_commit:
-                pass
-            else:
                 # avoid searching the same diffs
-                hashes = str(prev_commit) + str(curr_commit)
-                if hashes in already_searched:
-                    prev_commit = curr_commit
-                    continue
-                already_searched.add(hashes)
+                if str(curr_commit) in already_searched: continue
+                else: already_searched.add(str(curr_commit))
 
-                # diff = repo.git.diff(prev_commit, curr_commit, p=True)
-                # give all changes inside prev_commit
-		diffs = curr_commit.diff(prev_commit, create_patch=True, unified=0)
+                # gives all changes inside curr_commit
+                # can assume only 1 parent since merge commits excluded
+		empty_tree = '4b825dc642cb6eb9a060e54bf8d69288fbee4904' # for getting diff of first commit
+		parent = curr_commit.parents[0] if curr_commit.parents else repo.rev_parse(empty_tree)
+                diffs = parent.diff(curr_commit, create_patch=True, unified=0)
                 for diff in diffs:
                     diffstr = diff.diff.decode('utf-8', errors='replace')
                     if diffstr.startswith("Binary files"):
@@ -117,7 +113,10 @@ def find_strings(dir, printJson=False):
                             continue
                         elif line.startswith('-'): # only report when secrets are added, not removed
                             continue
-                        for word in line.split():
+			# TODO: don't output secret if it hasn't actually been changed / added by the commit
+			# 	eg. if the seceret is the same in the (-) and (+) portion of commit
+                        #	eg. https://bitbucket.service.edp.t-mobile.com/projects/CTA/repos/ct_core/commits/b45fcb1804cef10b4d13a9da9ee8dc140745a993
+			for word in line.split():
                             base64_strings = get_strings_of_set(word, BASE64_CHARS)
                             hex_strings = get_strings_of_set(word, HEX_CHARS)
                             for string in base64_strings:
@@ -133,14 +132,14 @@ def find_strings(dir, printJson=False):
                                     findings[string] = findings.get(string,[]) + [i]
                                     diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                     if len(findings) > 0:
-                        commit_time =  datetime.datetime.fromtimestamp(prev_commit.committed_date);
+                        commit_time =  datetime.datetime.fromtimestamp(curr_commit.committed_date);
                         entropicDiff = {}
                         entropicDiff['date'] = commit_time.isoformat()
-                        entropicDiff['author'] = {'name': prev_commit.author.name, 'email': prev_commit.author.email}
+                        entropicDiff['author'] = {'name': curr_commit.author.name, 'email': curr_commit.author.email}
                         entropicDiff['branch'] = branch_name
-                        entropicDiff['commit'] = prev_commit.message.strip()
-                        entropicDiff['hash'] = prev_commit.hexsha
-                        entropicDiff['file'] = diff.b_path # the name of the file after prev_commit applied
+                        entropicDiff['commit'] = curr_commit.message.strip()
+                        entropicDiff['hash'] = curr_commit.hexsha
+                        entropicDiff['file'] = diff.b_path # the name of the file after curr_commit applied
                         entropicDiff['diff'] = diff.diff.decode('utf-8', errors='replace')
                         entropicDiff['stringsFound'] = findings.keys() # TODO: remove this, deprecated by new 'findings' structure
                         entropicDiff['findings'] = findings # dictionary mapping found strings to a list of line numbers where they were found
@@ -151,14 +150,12 @@ def find_strings(dir, printJson=False):
                             sys.stdout.flush()
                         else:
                             print(bcolors.OKGREEN + "Date: " + commit_time.strftime('%Y-%m-%d %H:%M:%S') + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Author: " + prev_commit.author.email + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Author: " + curr_commit.author.email + bcolors.ENDC)
                             print(bcolors.OKGREEN + "Branch: " + branch_name + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Commit: " + prev_commit.message.strip() + bcolors.ENDC)
-                            print(bcolors.OKGREEN + "Hash: " + prev_commit.hexsha + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Commit: " + curr_commit.message.strip() + bcolors.ENDC)
+                            print(bcolors.OKGREEN + "Hash: " + curr_commit.hexsha + bcolors.ENDC)
                             print(bcolors.OKGREEN + "File: " + diff.b_path + bcolors.ENDC)
                             print('\n' + diffstr)
-
-            prev_commit = curr_commit
 
     if printJson: print('\n]')
     return entropicDiffs
