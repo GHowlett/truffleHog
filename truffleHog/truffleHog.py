@@ -17,13 +17,14 @@ from gibberishDetector import is_gibberish
 def main():
     parser = argparse.ArgumentParser(description='Find secrets hidden in the depths of git.')
     parser.add_argument('--json', dest="output_json", action="store_true", help="Output in JSON")
+    parser.add_argument('--latest-only', dest="latest_only", action="store_true", help="Only include latest occurence of secret")
     parser.add_argument('git_url', type=str, help='URL for secret searching')
     args = parser.parse_args()
     try:
         project_path = tempfile.mkdtemp()
 	# do a mirror clone to save space, preserve branch refs, and enable local bare repo targets
         Repo.clone_from(args.git_url, project_path, mirror=True)
-        output = find_strings(project_path, args.output_json)
+        output = find_strings(project_path, args.output_json, args.latest_only)
     finally:
         shutil.rmtree(project_path, onerror=del_rw)
 
@@ -76,10 +77,11 @@ class bcolors:
     BOLD = '\033[1m'
     UNDERLINE = '\033[4m'
 
-def find_strings(dir, printJson=False):
+def find_strings(dir, printJson=False, latestOnly=False):
     entropicDiffs = []
     repo = Repo(dir)
-    already_searched = set()
+    already_searched = set() # set of commits traversed
+    already_found = set() # set of secrets found
 
     if printJson: print('[')
 	
@@ -123,12 +125,18 @@ def find_strings(dir, printJson=False):
                                 b64Entropy = shannon_entropy(string, BASE64_CHARS)
 				# is_gibberish check reduces false positives with markov chain. 
 				# false negative unlikely if str is truly high-entropy.
-                                if b64Entropy > 4.5 and is_gibberish(string): 
+                                if b64Entropy > 4.5 and is_gibberish(string):
+                                    if string in already_found: continue
+                                    else: already_found.add(string)
+                                    
                                     findings[string] = findings.get(string,[]) + [i]
                                     diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                             for string in hex_strings:
                                 hexEntropy = shannon_entropy(string, HEX_CHARS)
                                 if hexEntropy > 3 and is_gibberish(string):
+                                    if string in already_found: continue
+                                    else: already_found.add(string)
+                                    
                                     findings[string] = findings.get(string,[]) + [i]
                                     diffstr = diffstr.replace(string, bcolors.WARNING + string + bcolors.ENDC)
                     if len(findings) > 0:
